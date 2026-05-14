@@ -182,3 +182,38 @@ See the CI failure retrieval skill (`.claude/skills/ci-failure-retrieval/SKILL.m
 | Deployment guides | `docs/source/deployment-guide/` |
 | Examples & customization | `docs/source/examples/` |
 | Performance analysis | `docs/source/developer-guide/perf-analysis.md` |
+
+## Cursor Cloud specific instructions
+
+### Environment limitations
+
+TensorRT-LLM is a GPU-accelerated inference library. The Cloud Agent VM has **no NVIDIA GPU**, so:
+
+- **`import tensorrt_llm`** fails at module-load time because the C++ bindings (`.so`) require CUDA/GPU and many modules call `torch.cuda.*` at import time.
+- **Unit tests** under `tests/unittest/` also fail to load because the shared `conftest.py` imports `tensorrt_llm`, triggering the same GPU dependency chain.
+- **Integration tests** require GPU + model weights (`LLM_MODELS_ROOT`).
+
+### What works without GPU
+
+| Task | Command | Notes |
+|------|---------|-------|
+| Lint (ruff) | `ruff check tensorrt_llm/` | Uses config from `pyproject.toml` |
+| Format check | `ruff format --check tensorrt_llm/` | |
+| Pre-commit | `pre-commit run --files <files>` | Hooks installed; runs isort, yapf, autoflake, ruff on changed files |
+| Type checking | `mypy` (partial) | Configured in `pyproject.toml`; many modules will fail to resolve bindings |
+
+### Running services
+
+- **`trtllm-serve`** and all inference require GPU — cannot run in this environment.
+- For serving and inference testing, use a GPU-equipped machine or the NGC container (`nvcr.io/nvidia/tensorrt-llm/release`).
+
+### Dependency refresh
+
+The update script installs Python dependencies from `requirements.txt` and `requirements-dev.txt`, plus `pre-commit install`. OpenMPI (`libopenmpi-dev`) is required as a system dependency for `mpi4py`.
+
+### Key gotchas
+
+- The `rawref` C extension (`tensorrt_llm/runtime/kv_cache_manager_v2/rawref/`) must be compiled: `cd tensorrt_llm/runtime/kv_cache_manager_v2/rawref && python3 setup.py build_ext --inplace`.
+- `cuda-tile` and `nvidia-cuda-tileiras` packages cause import failures without GPU (their code calls `torch.cuda.get_device_properties()` at import time). Uninstall them in CPU-only environments.
+- Pre-commit hooks modify files in-place — if hooks fail, `git add` the modified files and commit again.
+- Some pip packages (e.g. `triton==3.6.0` vs PyTorch's bundled `triton==3.7.0`) have version conflicts; the repo pins `triton==3.6.0` but PyTorch 2.12 wants 3.7.0. The mismatch is non-fatal for development.
